@@ -1,4 +1,4 @@
-import time
+import time, os, psutil
 from pathlib import Path
 import joblib, numpy as np, pandas as pd, plotly.express as px, shap, streamlit as st
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
@@ -18,7 +18,7 @@ def load_model():
 @st.cache_data
 def load_traffic(enc_cols):
     df = pd.read_csv(HERE / 'test_traffic.csv', dtype={c: str for c in enc_cols}, low_memory=False)
-    return df.sample(frac=1, random_state=7).reset_index(drop=True)   # shuffle for a realistic mix
+    return df.sample(frac=1, random_state=7).reset_index(drop=True)
 
 b = load_model()
 CLASSES = list(b['classes'])
@@ -33,7 +33,7 @@ def preprocess(rows):
 
 # ---------- state ----------
 ss = st.session_state
-for k, v in {'ptr': 0, 'running': False, 'log': [], 'blocked': {}}.items():
+for k, v in {'ptr': 0, 'running': False, 'log': [], 'blocked': {}, 'lat': []}.items():
     if k not in ss:
         ss[k] = v
 
@@ -51,7 +51,7 @@ with st.sidebar:
     if c2.button("⏸ Pause"):
         ss.running = False
     if st.button("🔄 Reset"):
-        ss.ptr, ss.running, ss.log, ss.blocked = 0, False, [], {}
+        ss.ptr, ss.running, ss.log, ss.blocked, ss.lat = 0, False, [], {}, []
     batch = st.slider("Packets per update", 5, 200, 25)
     delay = st.slider("Update interval (seconds)", 0.5, 5.0, 1.0)
     st.subheader("Security response")
@@ -69,7 +69,9 @@ def process(n):
     if rows.empty:
         ss.running = False
         return
+    t0 = time.perf_counter()
     proba = b['model'].predict_proba(preprocess(rows))
+    ss.lat.append((time.perf_counter() - t0) * 1000 / len(rows))
     now = time.strftime('%H:%M:%S')
     for i, (idx, r) in enumerate(rows.iterrows()):
         k = int(proba[i].argmax()); pred = CLASSES[k]; ip = str(r['src_ip'])
@@ -188,6 +190,13 @@ with tab4:
 
 # ---------- tab 5: edge model / base paper ----------
 with tab5:
+    st.subheader("Resource usage (live)")
+    r = st.columns(4)
+    r[0].metric("LightGBM model size", f"{os.path.getsize(HERE / 'ids_lightgbm.pkl') / 1024 / 1024:.1f} MB")
+    r[1].metric("INT8 TFLite size", f"{os.path.getsize(HERE / 'ids_mlp_int8.tflite') / 1024:.1f} KB")
+    r[2].metric("Dashboard RAM usage", f"{psutil.Process().memory_info().rss / 1024 / 1024:.0f} MB")
+    r[3].metric("Avg latency per flow", f"{np.mean(ss.lat):.3f} ms" if ss.lat else "—")
+
     st.subheader("Base-paper reproduction (our Colab results)")
     st.dataframe(pd.DataFrame([
         ['LightGBM', 0.9991, 0.9800, 0.9564],

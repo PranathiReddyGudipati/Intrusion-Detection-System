@@ -1,1 +1,1 @@
-streamlit pandas lightgbm scikit-learn joblib shap plotly 
+streamlit pandas lightgbm scikit-learn joblib shap plotly psutil 
